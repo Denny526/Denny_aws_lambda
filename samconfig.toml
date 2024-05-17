@@ -1,0 +1,10 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "MYSAMS3Lambda04"
+resolve_s3 = true
+s3_prefix = "MYSAMS3Lambda04"
+region = "us-west-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "DataBucket=\"denny-s3-lambda-bedrock-sns\" BedrockModelId=\"cohere.command-text-v14\" NotificationSNSTopicName=\"anomalous-data-alert\" NotificationEmail=\"denny.huang526@gmail.com\" NotiDB=\"email-alert-history\""
+image_repositories = []

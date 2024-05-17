@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Sample SAM Template for Lambda Function
+
+  '
+Globals:
+  Function:
+    Runtime: python3.9
+    Timeout: 900
+Parameters:
+  DataBucket:
+    Type: String
+  BedrockModelId:
+    Description: Amazon Bedrock Model Id
+    Type: String
+    Default: cohere.command-text-v14
+  NotificationSNSTopicName:
+    Description: Lambda will send notification email to this SNS topic
+    Type: String
+    Default: anomalous-data-alert
+  NotificationEmail:
+    Description: Notification email will be sent to this email address
+    Type: String
+  NotiDB:
+    Description: Notification history will be sent to this DynamoDB
+    Type: String
+    Default: email-alert-history
+Resources:
+  S3BucketCreation:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: DataBucket
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: LambdaFunction
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          REGION_NAME:
+            Fn::Sub: ${AWS::Region}
+          BEDROCK_MODEL:
+            Ref: BedrockModelId
+          NOTI_TABLE:
+            Ref: NotiDB
+          PARTITION_KEY: JobId
+          SNS_ARN:
+            Ref: NotificationSNSTopic
+      Architectures:
+      - x86_64
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: DataBucket
+      - SNSPublishMessagePolicy:
+          TopicName:
+            Fn::GetAtt:
+            - NotificationSNSTopic
+            - TopicName
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: NotiDB
+      - Statement:
+        - Action:
+          - s3:*
+          - s3-object-lambda:*
+          - sns:*
+          - dynamodb:*
+          Effect: Allow
+          Resource: '*'
+        - Sid: BedrockAll
+          Effect: Allow
+          Action:
+          - bedrock:*
+          Resource: '*'
+        - Sid: PassRoleToBedrock
+          Effect: Allow
+          Action:
+          - iam:PassRole
+          Resource: arn:aws:iam::*:role/*AmazonBedrock*
+          Condition:
+            StringEquals:
+              iam:PassedToService:
+              - bedrock.amazonaws.com
+      Events:
+        MyS3Event:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: S3BucketCreation
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: suffix
+                  Value: .csv
+    Metadata:
+      SamResourceId: LambdaFunction
+  NotificationSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:
+        Ref: NotificationSNSTopicName
+      Subscription:
+      - Protocol: email
+        Endpoint:
+          Ref: NotificationEmail
+  EmailAlertHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Ref: NotiDB
+      AttributeDefinitions:
+      - AttributeName: JobId
+        AttributeType: N
+      KeySchema:
+      - AttributeName: JobId
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      SSESpecification:
+        SSEEnabled: false

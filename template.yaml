@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Sample SAM Template for Lambda Function
+
+Globals:
+  Function:
+    Runtime: python3.9
+    Timeout: 900
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+
+Parameters:
+  DataBucket: # s3 bucket name
+    Type: String
+
+  BedrockModelId:
+    Description: Amazon Bedrock Model Id
+    Type: String
+    Default: 'cohere.command-text-v14' # 'anthropic.claude-v2:1'   
+    
+  NotificationSNSTopicName:
+    Description: 'Lambda will send notification email to this SNS topic'
+    Type: String
+    Default: 'anomalous-data-alert'
+    
+  NotificationEmail:
+    Description: 'Notification email will be sent to this email address'
+    Type: String
+    
+  NotiDB:
+    Description: 'Notification history will be sent to this DynamoDB'
+    Type: String
+    Default: 'email-alert-history'
+    
+Resources: # This section defines the AWS resources to be created as part of the SAM application.
+
+
+  S3BucketCreation: # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-s3.html
+    Type: AWS::S3::Bucket # Specifies the resource type
+    Properties:
+      BucketName: !Ref DataBucket
+      # Events: s3:ObjectCreated:*
+      # Filter:
+      #   S3Key:
+      #     Rules:
+      #     - Name: !Ref DataBucket 
+      #       Value: value      # The value to search for in the S3 object key names
+
+  LambdaFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: ./src # Path to your Lambda function code
+      Handler: app.lambda_handler # mymodule.myfunction (python name.function name)
+      # Runtime: python3.9
+      Environment:
+        Variables:
+          REGION_NAME: !Sub ${AWS::Region} #!GetAtt MyParameter.Value
+          BEDROCK_MODEL: !Ref BedrockModelId
+          # EMAIL_ADDRESS: !Ref NotificationEmail
+          NOTI_TABLE: !Ref NotiDB
+          PARTITION_KEY: JobId
+          SNS_ARN: !Ref NotificationSNSTopic # !GetAtt NotificationSNSTopic.Arn
+          
+      Architectures:
+      - x86_64
+      
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref DataBucket
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt NotificationSNSTopic.TopicName
+        - DynamoDBReadPolicy:
+            TableName: !Ref NotiDB
+        - Statement:
+            - Action:
+                - s3:*
+                - s3-object-lambda:*
+                - sns:*
+                - dynamodb:*
+                # - lambda:CreateFunction
+                # - lambda:ListFunctions
+                # - lambda:ListEventSourceMappings
+                # - lambda:CreateEventSourceMapping
+                # - lambda:DeleteEventSourceMapping
+                # - lambda:GetFunctionConfiguration
+                # - lambda:DeleteFunction
+                # - resource-groups:ListGroups
+                # - resource-groups:ListGroupResources
+                # - resource-groups:GetGroup
+                # - resource-groups:GetGroupQuery
+                # - resource-groups:DeleteGroup
+                # - resource-groups:CreateGroup
+                # - tag:GetResources
+                # - kinesis:ListStreams
+                # - kinesis:DescribeStream
+                # - kinesis:DescribeStreamSummary
+              Effect: Allow
+              Resource: '*'
+            
+            - Sid: BedrockAll
+              Effect: Allow
+              Action:
+                - bedrock:*
+              Resource: '*'
+            # - Sid: DescribeKey
+            #   Effect: Allow
+            #   Action:
+            #     - kms:DescribeKey
+            #   Resource: arn:*:kms:*:::*
+            # - Sid: APIsWithAllResourceAccess
+            #   Effect: Allow
+            #   Action:
+            #     - iam:ListRoles
+            #     - ec2:DescribeVpcs
+            #     - ec2:DescribeSubnets
+            #     - ec2:DescribeSecurityGroups
+            #   Resource: '*'
+            - Sid: PassRoleToBedrock
+              Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource: arn:aws:iam::*:role/*AmazonBedrock*
+              Condition:
+                StringEquals:
+                  iam:PassedToService:
+                    - bedrock.amazonaws.com
+
+      
+      Events: # set the s3 trigger here
+        MyS3Event:
+          Type: S3 # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Bucket: !Ref S3BucketCreation # Specifies the S3 bucket from which the events will be triggered. 
+            Events: s3:ObjectCreated:* #  Specifies the S3 events that trigger the Lambda function. In this example, we're triggering the function whenever an object is created (s3:ObjectCreated:*) in the bucket.
+            Filter: 
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: '.csv'   
+                    
+  NotificationSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Ref NotificationSNSTopicName
+      Subscription: 
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail 
+          
+  EmailAlertHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref NotiDB 
+      AttributeDefinitions:
+        - AttributeName: JobId
+          AttributeType: N
+      # BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: JobId
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5   
+      SSESpecification:
+        SSEEnabled: false  
+        
+        
+        
+        
